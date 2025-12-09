@@ -72,6 +72,8 @@ class Bird(pg.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.rect.center = xy
         self.speed = 10
+        self.state = "normal"  # 状態の変数
+        self.hyper_life = 0  # 無敵状態の発動時間の変数
 
     def change_img(self, num: int, screen: pg.Surface):
         """
@@ -99,6 +101,11 @@ class Bird(pg.sprite.Sprite):
         if not (sum_mv[0] == 0 and sum_mv[1] == 0):
             self.dire = tuple(sum_mv)
             self.image = self.imgs[self.dire]
+        if self.state == "hyper":  # 無敵状態のときのみ
+            self.image = pg.transform.laplacian(self.image)  # 透明化
+            self.hyper_life -= 1  # 発動時間
+            if self.hyper_life < 0:  # 発動時間が無くなると通常の状態に戻る
+                self.state = "normal"
         screen.blit(self.image, self.rect)
 
 
@@ -126,6 +133,7 @@ class Bomb(pg.sprite.Sprite):
         self.rect.centerx = emy.rect.centerx
         self.rect.centery = emy.rect.centery+emy.rect.height//2
         self.speed = 6
+        self.state="active"
 
     def update(self):
         """
@@ -232,7 +240,7 @@ class Score:
     def __init__(self):
         self.font = pg.font.Font(None, 50)
         self.color = (0, 0, 255)
-        self.value = 1000
+        self.value = 10000
         self.image = self.font.render(f"Score: {self.value}", 0, self.color)
         self.rect = self.image.get_rect()
         self.rect.center = 100, HEIGHT-50
@@ -293,6 +301,27 @@ class Gravity(pg.sprite.Sprite):
         if self.life < 0:
             self.kill()
 
+class EMP(pg.sprite.Sprite):
+    """
+    発動時に存在する敵機と爆弾を無効化するクラス
+    発動条件：「e」キー押下かつスコアが20より上
+    消費スコア：20
+    """
+    def __init__(self, emys:pg.sprite.Group, bombs:pg.sprite.Group, screen:pg.Surface):
+        super().__init__()
+        self.image=pg.Surface((WIDTH,HEIGHT))
+        pg.draw.rect(self.image,(255,255,0),(0,0,WIDTH,HEIGHT))
+        self.image.set_alpha(150)
+        for enemy in emys:
+            enemy.interval=math.inf
+            enemy.image=pg.transform.laplacian(enemy.image)
+        for bomb in bombs:
+            bomb.speed*=0.5
+            bomb.state="inaactive"
+        screen.blit(self.image,(0,0))
+        pg.display.update()
+        time.sleep(0.05)
+        
 
 def main():
     pg.display.set_caption("真！こうかとん無双")
@@ -308,6 +337,7 @@ def main():
     gravitys = pg.sprite.Group()
 
     shields = pg.sprite.Group()
+    emps = pg.sprite.Group()
     tmr = 0
     clock = pg.time.Clock()
     while True:
@@ -330,6 +360,9 @@ def main():
                     shields.add(Shield(bird))
                     score.value -= 50
 
+            if event.type==pg.KEYDOWN and event.key==pg.K_e and score.value>=20:
+                score.value-=20
+                emps.add(EMP(emys,bombs,screen))
         screen.blit(bg_img, [0, 0])
         gravitys.update()
         gravitys.draw(screen)
@@ -352,12 +385,16 @@ def main():
             score.value += 1  # 1点アップ
 
         for bomb in pg.sprite.spritecollide(bird, bombs, True):  # こうかとんと衝突した爆弾リスト
-            bird.change_img(8, screen)  # こうかとん悲しみエフェクト
-            score.update(screen)
-            pg.display.update()
-            time.sleep(2)
-            return
-        
+            if bird.state != "hyper":  # 無敵状態でないならゲームオーバー
+                if bomb.state=="active":
+                    bird.change_img(8, screen)  # こうかとん悲しみエフェクト
+                    score.update(screen)
+                    pg.display.update()
+                    time.sleep(2)
+                    return
+            exps.add(Explosion(bomb, 50))  # 爆発エフェクト
+            score.value += 1  # 1点アップ
+    
         if len(gravitys)>0:
             for emy in emys:
                 exps.add(Explosion(emy,50))  # 爆発エフェクト
@@ -370,6 +407,12 @@ def main():
             exps.add(Explosion(bomb, 50))  # 爆発エフェクト
             score.value += 1  # 1点アップ
             
+        if key_lst[pg.K_RSHIFT] and score.value >= 100 and bird.state != "hyper":  # 右SHIFTを押している&スコアが100以上&現在無敵状態ではない
+            score.value -= 100  # スコアを100消費
+            bird.state = "hyper"  # 現在の状態を無敵状態に変更
+            bird.hyper_life = 500  # 発動時間
+        
+
         bird.update(key_lst, screen)
         beams.update()
         beams.draw(screen)
@@ -385,6 +428,7 @@ def main():
         pg.display.update()
         tmr += 1
         clock.tick(50)
+        emps.update()
 
 
 if __name__ == "__main__":
